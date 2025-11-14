@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+jinja2
+aiofiles
+geopandas
+rasterio
+shapely
+numpy
+pillow
+opencv-python-headless
+segmentation-models-pytorch
+sqlalchemy
+python-multipart
