@@ -11,3 +11,4 @@ opencv-python-headless
 segmentation-models-pytorch
 sqlalchemy
 python-multipart
+psycopg2-binary
