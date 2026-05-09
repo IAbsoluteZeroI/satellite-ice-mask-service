@@ -2,8 +2,19 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Локальные настройки окружения не коммитим.
+.env
+.env.*
+!.env.example
+
+# Рабочие снимки и результаты обработки могут быть большими.
 data/*
 !data/.gitkeep
+!data/land-mask/
+data/land-mask/*
+!data/land-mask/ne_10m_land*
+!data/land-mask/ne_10m_land*/
+!data/land-mask/ne_10m_land*/**
 
 services/spark/models/*
 !services/spark/models/.gitkeep

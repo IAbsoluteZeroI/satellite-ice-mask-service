@@ -1,62 +1,75 @@
-﻿name: satellite-image-service
+name: ${COMPOSE_PROJECT_NAME}
+
+x-common-env: &common-env
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+  MINIO_BUCKET: ${MINIO_BUCKET}
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT}
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+x-spark-env: &spark-env
+  <<: *common-env
+  SPARK_NO_DAEMONIZE: ${SPARK_NO_DAEMONIZE}
+  KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+  KAFKA_TOPIC: ${KAFKA_TOPIC}
+  KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP}
+  RAW_PREFIX: ${RAW_PREFIX}
+  PROCESSED_PREFIX: ${PROCESSED_PREFIX}
+  TILE_PREFIX: ${TILE_PREFIX}
+  MASK_PREFIX: ${MASK_PREFIX}
+  SHAPEFILE_PREFIX: ${SHAPEFILE_PREFIX}
+  STATUS_PREFIX: ${STATUS_PREFIX}
+  LOCAL_INPUT_DIR: ${SPARK_LOCAL_INPUT_DIR}
+  WORK_DIR: ${WORK_DIR}
+  MODEL_PATH: ${MODEL_PATH}
+  LAND_MASK_PATH: ${LAND_MASK_PATH}
+  SEGMENTATION_DEVICE: ${SEGMENTATION_DEVICE}
+  NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES}
+  NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES}
+  PYTORCH_CUDA_ALLOC_CONF: ${PYTORCH_CUDA_ALLOC_CONF}
+  POLL_INTERVAL: ${POLL_INTERVAL}
+  PROCESSOR_WORKERS: ${PROCESSOR_WORKERS}
+  TILE_SIZE: ${TILE_SIZE}
+  TILE_MIN_VALID_RATIO: ${TILE_MIN_VALID_RATIO}
+  SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY}
+  SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY}
+  SPARK_EXECUTOR_CORES: ${SPARK_EXECUTOR_CORES}
+  MASK_FILLED_THRESHOLD: ${MASK_FILLED_THRESHOLD}
+  MASK_MIN_AREA: ${MASK_MIN_AREA}
+  MASK_MERGE_GAPS: ${MASK_MERGE_GAPS}
+  MASK_GAP_BUFFER: ${MASK_GAP_BUFFER}
 
 x-spark-base: &spark-base
   build: ./services/spark
   stdin_open: true
   tty: true
   volumes:
-    - ./data:/data/input
-    - ./data/land-mask/ne_10m_land:/opt/land-mask
-    - ./services/spark/app:/app
-    - ./services/spark/models:/app/models
+    - ${HOST_DATA_DIR}:${SPARK_LOCAL_INPUT_DIR}
+    - ${HOST_LAND_MASK_DIR}:${LAND_MASK_CONTAINER_DIR}
+    - ${HOST_SPARK_APP_DIR}:${SPARK_APP_DIR}
+    - ${HOST_SPARK_MODELS_DIR}:${SPARK_MODELS_DIR}
   environment:
-    SPARK_NO_DAEMONIZE: "true"
-    MINIO_ENDPOINT: http://minio:9000
-    MINIO_ACCESS_KEY: minioadmin
-    MINIO_SECRET_KEY: minioadmin
-    MINIO_BUCKET: satellite-images
-    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-    KAFKA_TOPIC: raw-images
-    KAFKA_CONSUMER_GROUP: spark-processor
-    LOCAL_INPUT_DIR: /data/input
-    MODEL_PATH: /app/models/UnetPP.pth
-    LAND_MASK_PATH: /opt/land-mask/ne_10m_land.shp
-    SEGMENTATION_DEVICE: cuda
-    NVIDIA_VISIBLE_DEVICES: all
-    NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-    POLL_INTERVAL: 5
-    PROCESSOR_WORKERS: 3
-    TILE_MIN_VALID_RATIO: 0.08
-    SPARK_DRIVER_MEMORY: 2g
-    SPARK_EXECUTOR_MEMORY: 5g
-    SPARK_EXECUTOR_CORES: 2
-    SHAPEFILE_PREFIX: processed/shapefiles/
-    MASK_FILLED_THRESHOLD: 0.05
-    MASK_MIN_AREA: 0.00001
-    MASK_MERGE_GAPS: "false"
-    MASK_GAP_BUFFER: 0.0
-    POSTGRES_HOST: postgres
-    POSTGRES_PORT: 5432
-    POSTGRES_DB: satellite
-    POSTGRES_USER: satellite
-    POSTGRES_PASSWORD: satellite
+    <<: *spark-env
 
 services:
   postgres:
     container_name: satellite-postgres
-    image: postgres:16
+    image: ${POSTGRES_IMAGE}
     environment:
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
-      POSTGRES_DB: satellite
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT}:${POSTGRES_PORT}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./services/postgres-init:/docker-entrypoint-initdb.d
+      - ${HOST_POSTGRES_INIT_DIR}:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U satellite -d satellite"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -64,18 +77,18 @@ services:
 
   minio:
     container_name: satellite-minio
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z-cpuv1
+    image: ${MINIO_IMAGE}
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":${MINIO_CONSOLE_PORT}"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT}:${MINIO_API_PORT}"
+      - "${MINIO_CONSOLE_PORT}:${MINIO_CONSOLE_PORT}"
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:${MINIO_API_PORT}/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -83,29 +96,29 @@ services:
 
   zookeeper:
     container_name: satellite-zookeeper
-    image: confluentinc/cp-zookeeper:7.5.0
+    image: ${ZOOKEEPER_IMAGE}
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_CLIENT_PORT}:${ZOOKEEPER_CLIENT_PORT}"
 
   kafka:
     container_name: satellite-kafka
-    image: confluentinc/cp-kafka:7.5.0
+    image: ${KAFKA_IMAGE}
     depends_on:
       - zookeeper
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "${KAFKA_HOST_PORT}:9092"
+      - "${KAFKA_EXTERNAL_PORT}:29092"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
+      KAFKA_ZOOKEEPER_CONNECT: ${KAFKA_ZOOKEEPER_CONNECT}
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      KAFKA_LISTENERS: ${KAFKA_LISTENERS}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE}
     healthcheck:
       test: ["CMD-SHELL", "cub kafka-ready -b localhost:9092 1 20 || exit 1"]
       interval: 10s
@@ -122,18 +135,15 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      LOCAL_INPUT_DIR: /data
-      CHECK_INTERVAL: 2
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_TOPIC: raw-images
-      RAW_PREFIX: raw/
-      REMOVE_AFTER_UPLOAD: "true"
+      <<: *common-env
+      LOCAL_INPUT_DIR: ${PRODUCER_LOCAL_INPUT_DIR}
+      CHECK_INTERVAL: ${CHECK_INTERVAL}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      RAW_PREFIX: ${RAW_PREFIX}
+      REMOVE_AFTER_UPLOAD: ${REMOVE_AFTER_UPLOAD}
     volumes:
-      - ./data:/data
+      - ${HOST_DATA_DIR}:${PRODUCER_LOCAL_INPUT_DIR}
     restart: unless-stopped
 
   web:
@@ -145,58 +155,44 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      TILE_PREFIX: processed/tiles/
-      MASK_PREFIX: processed/masks/
-      SHAPEFILE_PREFIX: processed/shapefiles/
-      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
-      MINIO_PRESIGNED_TTL_SECONDS: 86400
-      TILE_RENDER_PADDING_RATIO: 0.0
-      WEB_CONCURRENCY: 2
-      DOWNLOAD_DIR: /data
-      EE_PROJECT: small-talk-xfnc
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: satellite
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
+      <<: *common-env
+      TILE_PREFIX: ${TILE_PREFIX}
+      MASK_PREFIX: ${MASK_PREFIX}
+      SHAPEFILE_PREFIX: ${SHAPEFILE_PREFIX}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+      MINIO_PRESIGNED_TTL_SECONDS: ${MINIO_PRESIGNED_TTL_SECONDS}
+      TILE_RENDER_PADDING_RATIO: ${TILE_RENDER_PADDING_RATIO}
+      HTTP_CACHE_SECONDS: ${HTTP_CACHE_SECONDS}
+      MASK_ALPHA_MULTIPLIER: ${MASK_ALPHA_MULTIPLIER}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY}
+      DOWNLOAD_DIR: ${DOWNLOAD_DIR}
+      EE_PROJECT: ${EE_PROJECT}
     ports:
-      - "8080:8000"
+      - "${WEB_HOST_PORT}:${WEB_CONTAINER_PORT}"
     volumes:
-      - ./data:/data
-      - ./services/web/app:/app
-    command: ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers $${WEB_CONCURRENCY:-2}"]
+      - ${HOST_DATA_DIR}:${DOWNLOAD_DIR}
+      - ${HOST_WEB_APP_DIR}:${WEB_APP_DIR}
+    command: ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${WEB_CONTAINER_PORT} --workers $${WEB_CONCURRENCY:-2}"]
     restart: unless-stopped
 
   spark-master:
     <<: *spark-base
     container_name: spark-master
     environment:
+      <<: *common-env
       SPARK_MODE: master
-      SPARK_MASTER_HOST: spark-master
-      SPARK_NO_DAEMONIZE: "true"
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: satellite
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
+      SPARK_MASTER_HOST: ${SPARK_MASTER_HOST}
+      SPARK_NO_DAEMONIZE: ${SPARK_NO_DAEMONIZE}
     ports:
-      - "7077:7077"
-      - "8085:8080"
+      - "${SPARK_MASTER_PORT}:${SPARK_MASTER_PORT}"
+      - "${SPARK_MASTER_UI_PORT}:${SPARK_MASTER_UI_INTERNAL_PORT}"
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-      --host spark-master
-      --port 7077
-      --webui-port 8080
+      --host ${SPARK_MASTER_HOST}
+      --port ${SPARK_MASTER_PORT}
+      --webui-port ${SPARK_MASTER_UI_INTERNAL_PORT}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD", "curl", "-f", "http://localhost:${SPARK_MASTER_UI_INTERNAL_PORT}"]
       interval: 15s
       timeout: 5s
       retries: 20
@@ -205,104 +201,65 @@ services:
   spark-worker-1:
     <<: *spark-base
     container_name: spark-worker-1
-    gpus: all
-    shm_size: "2g"
+    gpus: ${SPARK_GPUS}
+    shm_size: ${SPARK_SHM_SIZE}
     depends_on:
       spark-master:
         condition: service_healthy
     environment:
+      <<: *spark-env
       SPARK_MODE: worker
-      SPARK_MASTER: spark://spark-master:7077
-      SPARK_WORKER_CORES: 2
-      SPARK_WORKER_MEMORY: 6g
-      SPARK_DAEMON_MEMORY: 1g
-      SPARK_NO_DAEMONIZE: "true"
-      SEGMENTATION_DEVICE: cuda
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: satellite
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
+      SPARK_MASTER: ${SPARK_MASTER_URL}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY}
+      SPARK_DAEMON_MEMORY: ${SPARK_DAEMON_MEMORY}
     ports:
-      - "8086:8081"
+      - "${SPARK_WORKER_1_UI_PORT}:${SPARK_WORKER_UI_INTERNAL_PORT}"
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077
+      ${SPARK_MASTER_URL}
 
   spark-worker-2:
     <<: *spark-base
     container_name: spark-worker-2
-    gpus: all
-    shm_size: "2g"
+    gpus: ${SPARK_GPUS}
+    shm_size: ${SPARK_SHM_SIZE}
     depends_on:
       spark-master:
         condition: service_healthy
     environment:
+      <<: *spark-env
       SPARK_MODE: worker
-      SPARK_MASTER: spark://spark-master:7077
-      SPARK_WORKER_CORES: 2
-      SPARK_WORKER_MEMORY: 6g
-      SPARK_DAEMON_MEMORY: 1g
-      SPARK_NO_DAEMONIZE: "true"
-      SEGMENTATION_DEVICE: cuda
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: satellite
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
+      SPARK_MASTER: ${SPARK_MASTER_URL}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY}
+      SPARK_DAEMON_MEMORY: ${SPARK_DAEMON_MEMORY}
     ports:
-      - "8087:8081"
+      - "${SPARK_WORKER_2_UI_PORT}:${SPARK_WORKER_UI_INTERNAL_PORT}"
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077
+      ${SPARK_MASTER_URL}
 
   spark-worker-3:
     <<: *spark-base
     container_name: spark-worker-3
-    gpus: all
-    shm_size: "2g"
+    gpus: ${SPARK_GPUS}
+    shm_size: ${SPARK_SHM_SIZE}
     depends_on:
       spark-master:
         condition: service_healthy
     environment:
+      <<: *spark-env
       SPARK_MODE: worker
-      SPARK_MASTER: spark://spark-master:7077
-      SPARK_WORKER_CORES: 2
-      SPARK_WORKER_MEMORY: 6g
-      SPARK_DAEMON_MEMORY: 1g
-      SPARK_NO_DAEMONIZE: "true"
-      SEGMENTATION_DEVICE: cuda
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: satellite-images
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: satellite
-      POSTGRES_USER: satellite
-      POSTGRES_PASSWORD: satellite
+      SPARK_MASTER: ${SPARK_MASTER_URL}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY}
+      SPARK_DAEMON_MEMORY: ${SPARK_DAEMON_MEMORY}
     ports:
-      - "8088:8081"
+      - "${SPARK_WORKER_3_UI_PORT}:${SPARK_WORKER_UI_INTERNAL_PORT}"
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077
+      ${SPARK_MASTER_URL}
 
   spark-processor:
     <<: *spark-base
@@ -318,16 +275,16 @@ services:
         condition: service_healthy
     command: >
       /opt/spark/bin/spark-submit
-      --master spark://spark-master:7077
+      --master ${SPARK_MASTER_URL}
       --deploy-mode client
-      --conf spark.driver.memory=2g
-      --conf spark.executor.memory=5g
-      --conf spark.executor.memoryOverhead=1g
-      --conf spark.executor.cores=2
-      --conf spark.task.cpus=2
+      --conf spark.driver.memory=${SPARK_DRIVER_MEMORY}
+      --conf spark.executor.memory=${SPARK_EXECUTOR_MEMORY}
+      --conf spark.executor.memoryOverhead=${SPARK_EXECUTOR_MEMORY_OVERHEAD}
+      --conf spark.executor.cores=${SPARK_EXECUTOR_CORES}
+      --conf spark.task.cpus=${SPARK_TASK_CPUS}
       --conf spark.python.worker.reuse=true
-      --conf spark.default.parallelism=3
-      /app/main.py
+      --conf spark.default.parallelism=${SPARK_DEFAULT_PARALLELISM}
+      ${SPARK_APP_DIR}/main.py
     restart: unless-stopped
 
 volumes:
