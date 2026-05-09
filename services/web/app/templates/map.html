@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <title>Карта обработки спутниковых снимков</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <style>
+        :root {
+            --bg: #eef2ed;
+            --panel: #f7f3e8;
+            --panel-2: #e7efe2;
+            --line: #c7d3c0;
+            --text: #1e2b22;
+            --muted: #596657;
+            --green: #2d6a4f;
+            --blue: #315c7c;
+            --white: rgba(255, 255, 255, 0.78);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Verdana, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 370px 1fr;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            padding: 18px;
+            background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+            border-right: 1px solid var(--line);
+            overflow: hidden;
+        }
+
+        .sidebar h1 {
+            margin: 0 0 12px;
+            font-size: 22px;
+            line-height: 1.2;
+        }
+
+        .hint {
+            margin: 0 0 16px;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        .form {
+            display: grid;
+            flex: 0 0 auto;
+            gap: 10px;
+            padding: 12px;
+            background: var(--white);
+            border: 1px solid #d2dccb;
+            border-radius: 14px;
+        }
+
+        label {
+            display: grid;
+            gap: 4px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        input {
+            padding: 8px 10px;
+            border: 1px solid #bdc9b6;
+            border-radius: 8px;
+            font: inherit;
+        }
+
+        button, .download-link {
+            cursor: pointer;
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 12px;
+            background: var(--green);
+            color: white;
+            font-weight: 700;
+            text-decoration: none;
+            text-align: center;
+        }
+
+        button.secondary {
+            background: var(--blue);
+        }
+
+        #layers {
+            min-height: 0;
+            margin-top: 12px;
+            padding-right: 6px;
+            overflow-y: auto;
+        }
+
+        .image-card {
+            margin-bottom: 10px;
+            padding: 12px;
+            border: 1px solid #d2dccb;
+            border-radius: 14px;
+            background: var(--white);
+            cursor: pointer;
+            transition: transform 0.12s ease, opacity 0.12s ease, border-color 0.12s ease;
+        }
+
+        .image-card:hover {
+            transform: translateY(-1px);
+            border-color: #8fac86;
+        }
+
+        .image-card.is-hidden {
+            opacity: 0.56;
+        }
+
+        .image-title {
+            font-weight: 800;
+            font-size: 14px;
+            word-break: break-word;
+        }
+
+        .image-meta {
+            margin: 6px 0 10px;
+            font-size: 12px;
+            color: #5f6b5e;
+            line-height: 1.45;
+        }
+
+        .toggles {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .toggles label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-weight: 500;
+        }
+
+        .toggles input {
+            padding: 0;
+        }
+
+        .card-actions {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-size: 13px;
+            color: var(--blue);
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 900px) {
+            .layout {
+                grid-template-columns: 1fr;
+                height: auto;
+                overflow: auto;
+            }
+
+            .sidebar {
+                height: 48vh;
+            }
+
+            #map {
+                height: 52vh;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="layout">
+    <aside class="sidebar">
+        <h1>Спутниковые снимки</h1>
+        <p class="hint">
+            Тайлы и маски подгружаются только для текущей области карты и только
+            для включённых снимков. Геометрия каждого тайла строится по его углам.
+        </p>
+
+        <div class="form">
+            <label>
+                Начальная дата
+                <input id="startDate" type="date" value="2021-11-01" />
+            </label>
+            <label>
+                Конечная дата
+                <input id="endDate" type="date" value="2022-03-30" />
+            </label>
+            <label>
+                Лимит снимков
+                <input id="limit" type="number" min="1" max="20" value="3" />
+            </label>
+            <button onclick="downloadCurrentArea()">Скачать снимки по текущей области карты</button>
+            <button class="secondary" onclick="loadImages()">Обновить слои</button>
+            <div id="status"></div>
+        </div>
+
+        <div id="layers"></div>
+    </aside>
+
+    <main>
+        <div id="map"></div>
+    </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+<script>
+    L.CornerImageOverlay = L.Layer.extend({
+        initialize(url, corners, options) {
+            L.setOptions(this, options);
+            this._url = url;
+            this._corners = corners;
+        },
+
+        onAdd(map) {
+            this._map = map;
+            if (!this._image) {
+                this._initImage();
+            }
+            this.getPane().appendChild(this._image);
+            map.on('zoom viewreset zoomend moveend', this._reset, this);
+            this._reset();
+        },
+
+        onRemove(map) {
+            if (this._image) {
+                L.DomUtil.remove(this._image);
+            }
+            map.off('zoom viewreset zoomend moveend', this._reset, this);
+            this._map = null;
+        },
+
+        getPane() {
+            return this._map.getPane(this.options.pane || 'overlayPane');
+        },
+
+        _initImage() {
+            const image = L.DomUtil.create('img', 'leaflet-image-layer corner-image-overlay');
+            image.src = this._url;
+            image.alt = '';
+            image.style.position = 'absolute';
+            image.style.transformOrigin = '0 0';
+            image.style.willChange = 'transform';
+            image.style.pointerEvents = 'none';
+            image.onload = () => this._reset();
+            this._image = image;
+        },
+
+        _reset() {
+            if (!this._map || !this._image) {
+                return;
+            }
+
+            const topLeft = this._map.latLngToLayerPoint(this._corners.topLeft);
+            const topRight = this._map.latLngToLayerPoint(this._corners.topRight);
+            const bottomLeft = this._map.latLngToLayerPoint(this._corners.bottomLeft);
+            const width = this._image.naturalWidth || this._image.width || 1000;
+            const height = this._image.naturalHeight || this._image.height || 1000;
+
+            this._image.style.width = `${width}px`;
+            this._image.style.height = `${height}px`;
+
+            const transform = this._buildAffineTransform(width, height, topLeft, topRight, bottomLeft);
+
+            this._image.style[L.DomUtil.TRANSFORM] = transform;
+            this._image.style.transform = transform;
+        },
+
+        _buildAffineTransform(width, height, topLeft, topRight, bottomLeft) {
+            const a = (topRight.x - topLeft.x) / width;
+            const b = (topRight.y - topLeft.y) / width;
+            const c = (bottomLeft.x - topLeft.x) / height;
+            const d = (bottomLeft.y - topLeft.y) / height;
+            return `translate3d(${topLeft.x}px, ${topLeft.y}px, 0) matrix(${a}, ${b}, ${c}, ${d}, 0, 0)`;
+        },
+    });
+
+    const map = L.map('map', {preferCanvas: true}).setView([73, 75], 5);
+    const layerState = new Map();
+    let refreshTimer = null;
+    window.setInterval(() => {
+        refreshImageStatuses().catch((error) => console.error(error));
+    }, 5000);
+
+    map.createPane('processedTilesPane');
+    map.getPane('processedTilesPane').style.zIndex = 450;
+    map.createPane('processedOutlinePane');
+    map.getPane('processedOutlinePane').style.zIndex = 500;
+    map.createPane('processedMasksPane');
+    map.getPane('processedMasksPane').style.zIndex = 540;
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    function setStatus(message) {
+        document.getElementById('status').textContent = message;
+    }
+
+    function shortName(value) {
+        if (!value) {
+            return 'не указано';
+        }
+        const parts = value.split('/');
+        return parts[parts.length - 1];
+    }
+
+    function colorByIndex(index) {
+        const colors = ['#2d6a4f', '#bc6c25', '#315c7c', '#7f5539', '#52796f', '#9d4edd'];
+        return colors[index % colors.length];
+    }
+
+    function formatImageStatus(image) {
+        const progress = image.progress_total ? ` (${image.progress_current || 0}/${image.progress_total})` : '';
+        const stage = image.stage ? ` / ${image.stage}` : '';
+        return `${image.status || 'unknown'}${stage}${progress}`;
+    }
+
+    function renderImageMeta(image) {
+        const details = image.details ? `<br>${image.details}` : '';
+        return `
+            Дата: ${image.acquisition_date || 'не определена'}<br>
+            Тайлов: ${image.tile_count || 0}<br>
+            Статус: ${formatImageStatus(image)}${details}
+        `;
+    }
+
+    function updateLayerCard(state) {
+        if (!state.card) {
+            return;
+        }
+        const meta = state.card.querySelector('.image-meta');
+        if (meta) {
+            meta.innerHTML = renderImageMeta(state.image);
+        }
+    }
+
+    async function refreshImageStatuses() {
+        if (!layerState.size) {
+            return;
+        }
+
+        const response = await fetch('/api/images');
+        const data = await response.json();
+        const incomingIds = new Set((data.images || []).map((image) => image.id));
+        if (incomingIds.size !== layerState.size) {
+            await loadImages();
+            return;
+        }
+
+        for (const image of data.images || []) {
+            const state = layerState.get(image.id);
+            if (!state) {
+                await loadImages();
+                return;
+            }
+            state.image = {...state.image, ...image};
+            updateLayerCard(state);
+        }
+    }
+
+    function toFeatureBounds(feature) {
+        return L.latLngBounds(feature.properties.bounds[0], feature.properties.bounds[1]);
+    }
+
+    function toFeatureCorners(feature) {
+        const corners = feature.properties.corners;
+        if (!corners) {
+            const bounds = toFeatureBounds(feature);
+            return {
+                topLeft: bounds.getNorthWest(),
+                topRight: bounds.getNorthEast(),
+                bottomRight: bounds.getSouthEast(),
+                bottomLeft: bounds.getSouthWest(),
+            };
+        }
+
+        return {
+            topLeft: L.latLng(corners.top_left[0], corners.top_left[1]),
+            topRight: L.latLng(corners.top_right[0], corners.top_right[1]),
+            bottomRight: L.latLng(corners.bottom_right[0], corners.bottom_right[1]),
+            bottomLeft: L.latLng(corners.bottom_left[0], corners.bottom_left[1]),
+        };
+    }
+
+    function createCornerOverlay(url, feature, options) {
+        return new L.CornerImageOverlay(url, toFeatureCorners(feature), options);
+    }
+
+    function toImageBoundsFromImage(image) {
+        const bounds = image.bounds;
+        if (!bounds || bounds.west === null) {
+            return null;
+        }
+        return L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]);
+    }
+
+    function removeLayerIfPresent(layer) {
+        if (layer && map.hasLayer(layer)) {
+            map.removeLayer(layer);
+        }
+    }
+
+    function removeFeatureEntry(entry) {
+        if (!entry) {
+            return;
+        }
+        removeLayerIfPresent(entry.tileLayer);
+        removeLayerIfPresent(entry.maskLayer);
+    }
+
+    function clearRenderedEntries(state) {
+        for (const entry of state.renderedEntries.values()) {
+            removeFeatureEntry(entry);
+        }
+        state.renderedEntries.clear();
+        state.featureCache.clear();
+    }
+
+    function abortController(controller) {
+        if (controller) {
+            controller.abort();
+        }
+    }
+
+    function abortStateRequests(state) {
+        state.requestEpoch += 1;
+        abortController(state.tilesController);
+        abortController(state.outlineController);
+        state.tilesController = null;
+        state.outlineController = null;
+        state.tilesLoading = false;
+        state.outlineLoading = false;
+        state.requestedKey = null;
+    }
+
+    function buildTileRequestKey(bounds, color) {
+        const round = (value) => Number(value).toFixed(4);
+        return [round(bounds.getWest()), round(bounds.getSouth()), round(bounds.getEast()), round(bounds.getNorth()), color].join('|');
+    }
+
+    function buildTileRequestUrl(state, bounds) {
+        const params = new URLSearchParams({
+            source: state.image.source_object_key,
+            west: bounds.getWest().toString(),
+            south: bounds.getSouth().toString(),
+            east: bounds.getEast().toString(),
+            north: bounds.getNorth().toString(),
+            mask_color: state.color.replace('#', ''),
+        });
+        return `/api/tiles-geojson?${params.toString()}`;
+    }
+
+    function renderOutlineVisibility(state, intersectsView) {
+        // Внешнюю обводку снимка не показываем: ориентацию задают сами тайлы и маски.
+        removeLayerIfPresent(state.outlineGroup);
+    }
+
+    async function ensureOutlineLoaded(state, intersectsView) {
+        renderOutlineVisibility(state, false);
+    }
+
+    function syncRenderedEntries(state) {
+        const currentNames = new Set(state.featureCache.keys());
+
+        for (const [filename, feature] of state.featureCache.entries()) {
+            let entry = state.renderedEntries.get(filename);
+
+            if (!entry) {
+                entry = {};
+                state.renderedEntries.set(filename, entry);
+            }
+
+            if (state.visible && state.showTiles) {
+                if (!entry.tileLayer) {
+                    entry.tileLayer = createCornerOverlay(feature.properties.image_url, feature, {
+                        pane: 'processedTilesPane',
+                        opacity: 0.86,
+                        interactive: false,
+                    });
+                }
+                if (!map.hasLayer(entry.tileLayer)) {
+                    entry.tileLayer.addTo(map);
+                }
+            } else if (entry.tileLayer) {
+                removeLayerIfPresent(entry.tileLayer);
+            }
+
+            if (state.visible && state.showMasks) {
+                if (!entry.maskLayer) {
+                    entry.maskLayer = createCornerOverlay(feature.properties.mask_image_url, feature, {
+                        pane: 'processedMasksPane',
+                        opacity: 1,
+                        interactive: false,
+                    });
+                }
+                if (!map.hasLayer(entry.maskLayer)) {
+                    entry.maskLayer.addTo(map);
+                }
+                if (entry.maskLayer.bringToFront) {
+                    entry.maskLayer.bringToFront();
+                }
+            } else if (entry.maskLayer) {
+                removeLayerIfPresent(entry.maskLayer);
+            }
+        }
+
+        for (const [filename, entry] of state.renderedEntries.entries()) {
+            if (!currentNames.has(filename)) {
+                removeFeatureEntry(entry);
+                state.renderedEntries.delete(filename);
+            }
+        }
+    }
+
+    async function requestVisibleTiles(state, requestedBounds) {
+        if (!state.visible || (!state.showTiles && !state.showMasks)) {
+            clearRenderedEntries(state);
+            return;
+        }
+
+        const requestKey = buildTileRequestKey(requestedBounds, state.color);
+        if (state.requestedKey === requestKey) {
+            syncRenderedEntries(state);
+            return;
+        }
+
+        abortController(state.tilesController);
+        state.tilesLoading = true;
+        state.requestedKey = requestKey;
+        const controller = new AbortController();
+        const requestEpoch = state.requestEpoch;
+        state.tilesController = controller;
+
+        try {
+            const response = await fetch(buildTileRequestUrl(state, requestedBounds), {signal: controller.signal});
+            const data = await response.json();
+            if (controller.signal.aborted || !state.visible || state.requestedKey !== requestKey || state.requestEpoch !== requestEpoch) {
+                return;
+            }
+
+            state.featureCache = new Map((data.features || []).map((feature) => [feature.properties.filename, feature]));
+            syncRenderedEntries(state);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('Ошибка загрузки тайлов и масок:', error);
+            }
+        } finally {
+            if (state.tilesController === controller) {
+                state.tilesController = null;
+            }
+            state.tilesLoading = false;
+        }
+    }
+
+    async function refreshImageState(state, visibleBounds) {
+        const imageBounds = toImageBoundsFromImage(state.image);
+        const intersectsView = imageBounds ? imageBounds.intersects(visibleBounds.pad(0.15)) : false;
+
+        if (!state.visible) {
+            abortStateRequests(state);
+            clearRenderedEntries(state);
+            renderOutlineVisibility(state, false);
+            return;
+        }
+
+        await ensureOutlineLoaded(state, intersectsView);
+
+        if (!intersectsView) {
+            clearRenderedEntries(state);
+            renderOutlineVisibility(state, false);
+            return;
+        }
+
+        renderOutlineVisibility(state, true);
+
+        if (!state.showTiles && !state.showMasks) {
+            abortController(state.tilesController);
+            state.tilesController = null;
+            state.tilesLoading = false;
+            state.requestedKey = null;
+            clearRenderedEntries(state);
+            return;
+        }
+
+        await requestVisibleTiles(state, visibleBounds.pad(0.12));
+    }
+
+    async function refreshVisibleData() {
+        const visibleBounds = map.getBounds();
+        const states = Array.from(layerState.values()).filter((state) => state.visible).reverse();
+        await Promise.all(states.map((state) => refreshImageState(state, visibleBounds)));
+    }
+
+    function scheduleRefreshVisibleData() {
+        window.clearTimeout(refreshTimer);
+        refreshTimer = window.setTimeout(() => {
+            refreshVisibleData().catch((error) => {
+                console.error(error);
+                setStatus(`Ошибка обновления слоёв: ${error}`);
+            });
+        }, 110);
+    }
+
+    function centerOnImage(image) {
+        const bounds = toImageBoundsFromImage(image);
+        if (!bounds) {
+            return;
+        }
+        map.fitBounds(bounds, {padding: [44, 44], maxZoom: 11});
+    }
+
+    function renderLayerCard(image) {
+        const card = document.createElement('div');
+        card.className = 'image-card';
+        card.dataset.imageId = image.id;
+        card.innerHTML = `
+            <div class="image-title">${image.source_label}</div>
+            <div class="image-meta">${renderImageMeta(image)}</div>
+            <div class="toggles">
+                <label><input class="toggle-image" type="checkbox" checked> Снимок</label>
+                <label><input class="toggle-tiles" type="checkbox" checked> Тайлы</label>
+                <label><input class="toggle-masks" type="checkbox" checked> Маски</label>
+            </div>
+            <div class="card-actions">
+                <a class="download-link" href="${image.download_url}">Скачать shapefile</a>
+            </div>
+        `;
+        document.getElementById('layers').appendChild(card);
+        const existingState = layerState.get(image.id);
+        if (existingState) {
+            existingState.card = card;
+        }
+
+        card.addEventListener('click', (event) => {
+            if (event.target.closest('input, a, button')) {
+                return;
+            }
+            const state = layerState.get(image.id);
+            centerOnImage(state ? state.image : image);
+        });
+
+        card.querySelector('.toggle-image').addEventListener('change', (event) => {
+            const state = layerState.get(image.id);
+            if (!state) {
+                return;
+            }
+            state.visible = event.target.checked;
+            card.classList.toggle('is-hidden', !state.visible);
+            if (!state.visible) {
+                abortStateRequests(state);
+                clearRenderedEntries(state);
+                renderOutlineVisibility(state, false);
+            }
+            scheduleRefreshVisibleData();
+        });
+
+        card.querySelector('.toggle-tiles').addEventListener('change', (event) => {
+            const state = layerState.get(image.id);
+            if (!state) {
+                return;
+            }
+            state.showTiles = event.target.checked;
+            if (!state.showTiles) {
+                for (const entry of state.renderedEntries.values()) {
+                    removeLayerIfPresent(entry.tileLayer);
+                    entry.tileLayer = null;
+                }
+            }
+            scheduleRefreshVisibleData();
+        });
+
+        card.querySelector('.toggle-masks').addEventListener('change', (event) => {
+            const state = layerState.get(image.id);
+            if (!state) {
+                return;
+            }
+            state.showMasks = event.target.checked;
+            if (!state.showMasks) {
+                for (const entry of state.renderedEntries.values()) {
+                    removeLayerIfPresent(entry.maskLayer);
+                    entry.maskLayer = null;
+                }
+            }
+            scheduleRefreshVisibleData();
+        });
+    }
+
+    async function loadImages() {
+        setStatus('Загружаю список снимков...');
+        document.getElementById('layers').innerHTML = '';
+
+        for (const state of layerState.values()) {
+            abortStateRequests(state);
+            clearRenderedEntries(state);
+            removeLayerIfPresent(state.outlineGroup);
+        }
+        layerState.clear();
+
+        const response = await fetch('/api/images');
+        const data = await response.json();
+
+        if (!data.images.length) {
+            setStatus('Обработанных снимков пока нет.');
+            return;
+        }
+
+        for (let index = 0; index < data.images.length; index += 1) {
+            const image = data.images[index];
+            const state = {
+                image,
+                color: colorByIndex(index),
+                visible: true,
+                showTiles: true,
+                showMasks: true,
+                requestEpoch: 0,
+                outlineGroup: L.layerGroup(),
+                outlineLoaded: false,
+                outlineLoading: false,
+                outlineController: null,
+                tilesController: null,
+                tilesLoading: false,
+                requestedKey: null,
+                featureCache: new Map(),
+                renderedEntries: new Map(),
+            };
+            layerState.set(image.id, state);
+            renderLayerCard(image);
+        }
+
+        const firstBounds = toImageBoundsFromImage(data.images[0]);
+        if (firstBounds) {
+            map.fitBounds(firstBounds, {padding: [44, 44], maxZoom: 10});
+        }
+
+        scheduleRefreshVisibleData();
+        setStatus(`Загружено снимков: ${data.images.length}. Тайлы и маски подгружаются только для текущего bbox карты.`);
+    }
+
+    async function downloadCurrentArea() {
+        const bounds = map.getBounds();
+        const payload = {
+            west: bounds.getWest(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            north: bounds.getNorth(),
+            start_date: document.getElementById('startDate').value,
+            end_date: document.getElementById('endDate').value,
+            limit: Number(document.getElementById('limit').value || 3),
+        };
+
+        setStatus('Запущено скачивание снимков по текущей области...');
+        const response = await fetch('/api/download-area', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+            setStatus(`Ошибка скачивания: ${result.error || 'неизвестная ошибка'}\n${result.details || ''}`);
+            return;
+        }
+
+        setStatus(`Скачано файлов: ${result.downloaded_count}\n${result.downloaded_files.join('\n')}`);
+    }
+
+    map.on('moveend zoomend resize', scheduleRefreshVisibleData);
+    loadImages().catch((error) => setStatus(`Ошибка загрузки карты: ${error}`));
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+boto3
+earthengine-api
+fastapi
+fiona==1.9.6
+geemap
+geopandas==0.13.2
+jinja2
+psycopg2-binary
+pyproj==3.5.0
+python-multipart
+shapely==2.0.6
+uvicorn[standard]
